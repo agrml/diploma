@@ -77,6 +77,7 @@
 
 #include <cmdline_parse.h>
 #include <cmdline_parse_etheraddr.h>
+#include <rte_config.h>
 
 #include "l3fwd.h"
 
@@ -90,6 +91,10 @@
 #define MAX_RX_QUEUE_PER_PORT 128
 
 #define MAX_LCORE_PARAMS 1024
+
+#ifdef __SSE4_1__
+#undef __SSE4_1__
+#endif
 
 /* Static global variables used within this file. */
 static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
@@ -112,7 +117,7 @@ volatile bool force_quit;
 uint64_t dest_eth_addr[RTE_MAX_ETHPORTS];
 struct ether_addr ports_eth_addr[RTE_MAX_ETHPORTS];
 
-xmm_t val_eth[RTE_MAX_ETHPORTS];
+__m128i val_eth[RTE_MAX_ETHPORTS];
 
 /* mask of enabled ports */
 uint32_t enabled_port_mask;
@@ -805,6 +810,7 @@ main(int argc, char **argv)
 	signal(SIGTERM, signal_handler);
 
 	/* pre-init dst MACs for all ports to 02:00:00:00:00:xx */
+	// TODO: its hardcode. it's not mac learning
 	for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) {
 		dest_eth_addr[portid] =
 			ETHER_LOCAL_ADMIN_ADDR + ((uint64_t)portid << 40);

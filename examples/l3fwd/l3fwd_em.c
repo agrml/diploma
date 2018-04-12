@@ -62,6 +62,10 @@
 #define DEFAULT_HASH_FUNC       rte_hash_crc
 #else
 #include <rte_jhash.h>
+
+// remove:
+//#include <rte_config.h>
+
 #define DEFAULT_HASH_FUNC       rte_jhash
 #endif /* RTE_MACHINE_CPUFLAG_SSE4_2 */
 
@@ -109,7 +113,7 @@ union ipv6_5tuple_host {
 		uint16_t port_dst;
 		uint64_t reserve;
 	};
-	xmm_t xmm[XMM_NUM_IN_IPV6_5TUPLE];
+	__m128i xmm[XMM_NUM_IN_IPV6_5TUPLE];
 };
 
 
@@ -238,27 +242,9 @@ ipv6_hash_crc(const void *data, __rte_unused uint32_t data_len,
 static uint8_t ipv4_l3fwd_out_if[L3FWD_HASH_ENTRIES] __rte_cache_aligned;
 static uint8_t ipv6_l3fwd_out_if[L3FWD_HASH_ENTRIES] __rte_cache_aligned;
 
-static rte_xmm_t mask0;
-static rte_xmm_t mask1;
-static rte_xmm_t mask2;
-
-#if defined(__SSE2__)
-static inline xmm_t
-em_mask_key(void *key, xmm_t mask)
-{
-	__m128i data = _mm_loadu_si128((__m128i *)(key));
-
-	return _mm_and_si128(data, mask);
-}
-#elif defined(RTE_MACHINE_CPUFLAG_NEON)
-static inline xmm_t
-em_mask_key(void *key, xmm_t mask)
-{
-	int32x4_t data = vld1q_s32((int32_t *)key);
-
-	return vandq_s32(data, mask);
-}
-#endif
+static __m128i mask0;
+static __m128i mask1;
+static __m128i mask2;
 
 static inline uint8_t
 em_get_ipv4_dst_port(void *ipv4_hdr, uint8_t portid, void *lookup_struct)
@@ -269,12 +255,13 @@ em_get_ipv4_dst_port(void *ipv4_hdr, uint8_t portid, void *lookup_struct)
 		(struct rte_hash *)lookup_struct;
 
 	ipv4_hdr = (uint8_t *)ipv4_hdr + offsetof(struct ipv4_hdr, time_to_live);
+	__m128i data = _mm_loadu_si128((__m128i *)(ipv4_hdr));
 
 	/*
 	 * Get 5 tuple: dst port, src port, dst IP address,
 	 * src IP address and protocol.
 	 */
-	key.xmm = em_mask_key(ipv4_hdr, mask0.x);
+	key.xmm = _mm_and_si128(data, mask0);
 
 	/* Find destination port */
 	ret = rte_hash_lookup(ipv4_l3fwd_lookup_struct, (const void *)&key);
@@ -290,41 +277,80 @@ em_get_ipv6_dst_port(void *ipv6_hdr,  uint8_t portid, void *lookup_struct)
 		(struct rte_hash *)lookup_struct;
 
 	ipv6_hdr = (uint8_t *)ipv6_hdr + offsetof(struct ipv6_hdr, payload_len);
-	void *data0 = ipv6_hdr;
-	void *data1 = ((uint8_t *)ipv6_hdr) + sizeof(xmm_t);
-	void *data2 = ((uint8_t *)ipv6_hdr) + sizeof(xmm_t) + sizeof(xmm_t);
+	__m128i data0 =
+		_mm_loadu_si128((__m128i *)(ipv6_hdr));
+	__m128i data1 =
+		_mm_loadu_si128((__m128i *)(((uint8_t *)ipv6_hdr)+
+					sizeof(__m128i)));
+	__m128i data2 =
+		_mm_loadu_si128((__m128i *)(((uint8_t *)ipv6_hdr)+
+					sizeof(__m128i)+sizeof(__m128i)));
 
 	/* Get part of 5 tuple: src IP address lower 96 bits and protocol */
-	key.xmm[0] = em_mask_key(data0, mask1.x);
+	key.xmm[0] = _mm_and_si128(data0, mask1);
 
 	/*
 	 * Get part of 5 tuple: dst IP address lower 96 bits
 	 * and src IP address higher 32 bits.
 	 */
-	key.xmm[1] = *(xmm_t *)data1;
+	key.xmm[1] = data1;
 
 	/*
 	 * Get part of 5 tuple: dst port and src port
 	 * and dst IP address higher 32 bits.
 	 */
-	key.xmm[2] = em_mask_key(data2, mask2.x);
+	key.xmm[2] = _mm_and_si128(data2, mask2);
 
 	/* Find destination port */
 	ret = rte_hash_lookup(ipv6_l3fwd_lookup_struct, (const void *)&key);
 	return (uint8_t)((ret < 0) ? portid : ipv6_l3fwd_out_if[ret]);
 }
 
+static inline __attribute__((always_inline)) void
+l3fwd_em_simple_forward(struct rte_mbuf *m, uint8_t portid,
+		struct lcore_conf *qconf)
+{
+	struct ether_hdr *eth_hdr;
+	struct ipv4_hdr *ipv4_hdr;
+	uint8_t dst_port;
+
+	eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+
+	if (eth_hdr->ether_type == 0x8) {
+		printf("got packet\n");
+		/* Handle IPv4 headers.*/
+		ipv4_hdr = rte_pktmbuf_mtod_offset(m, struct ipv4_hdr *, sizeof(struct ether_hdr));
+		ipv4_hdr = ipv4_hdr;
+
+//		 dst_port = em_get_ipv4_dst_port(ipv4_hdr, portid,
+//						qconf->ipv4_lookup_struct);
+        dst_port = (portid == 0 ? 1 : 0);
+
+//		if (dst_port >= RTE_MAX_ETHPORTS ||
+//			(enabled_port_mask & 1 << dst_port) == 0)
+//			dst_port = portid;
+
+		/* dst addr */
+        // its hardcode. it's not mac learning
+		*(uint64_t *)&eth_hdr->d_addr = dest_eth_addr[dst_port];
+
+		/* src addr */
+		ether_addr_copy(&ports_eth_addr[dst_port], &eth_hdr->s_addr);
+
+		send_single_packet(qconf, m, dst_port);
+	} else {
+		/* Free the mbuf that contains non-IPV4 packet */
+		printf("drop\n");
+		rte_pktmbuf_free(m);
+	}
+}
 
 /*
  * Include header file if SSE4_1 is enabled for
  * buffer optimization i.e. ENABLE_MULTI_BUFFER_OPTIMIZE=1.
  */
 #if defined(__SSE4_1__)
-#if defined(NO_HASH_MULTI_LOOKUP)
 #include "l3fwd_em_sse.h"
-#else
-#include "l3fwd_em_hlm_sse.h"
-#endif
 #else
 #include "l3fwd_em.h"
 #endif
@@ -370,8 +396,8 @@ populate_ipv4_few_flow_into_table(const struct rte_hash *h)
 	uint32_t i;
 	int32_t ret;
 
-	mask0 = (rte_xmm_t){.u32 = {BIT_8_TO_15, ALL_32_BITS,
-				ALL_32_BITS, ALL_32_BITS} };
+    mask0 = _mm_set_epi32(ALL_32_BITS, ALL_32_BITS,
+            ALL_32_BITS, BIT_8_TO_15);
 
 	for (i = 0; i < IPV4_L3FWD_EM_NUM_ROUTES; i++) {
 		struct ipv4_l3fwd_em_route  entry;
@@ -397,10 +423,10 @@ populate_ipv6_few_flow_into_table(const struct rte_hash *h)
 	uint32_t i;
 	int32_t ret;
 
-	mask1 = (rte_xmm_t){.u32 = {BIT_16_TO_23, ALL_32_BITS,
-				ALL_32_BITS, ALL_32_BITS} };
+	mask1 = _mm_set_epi32(ALL_32_BITS, ALL_32_BITS,
+				ALL_32_BITS, BIT_16_TO_23);
 
-	mask2 = (rte_xmm_t){.u32 = {ALL_32_BITS, ALL_32_BITS, 0, 0} };
+	mask2 = _mm_set_epi32(0, 0, ALL_32_BITS, ALL_32_BITS);
 
 	for (i = 0; i < IPV6_L3FWD_EM_NUM_ROUTES; i++) {
 		struct ipv6_l3fwd_em_route entry;
@@ -426,8 +452,8 @@ populate_ipv4_many_flow_into_table(const struct rte_hash *h,
 {
 	unsigned i;
 
-	mask0 = (rte_xmm_t){.u32 = {BIT_8_TO_15, ALL_32_BITS,
-				ALL_32_BITS, ALL_32_BITS} };
+    mask0 = _mm_set_epi32(ALL_32_BITS, ALL_32_BITS,
+            ALL_32_BITS, BIT_8_TO_15);
 
 	for (i = 0; i < nr_flow; i++) {
 		struct ipv4_l3fwd_em_route entry;
@@ -478,9 +504,9 @@ populate_ipv6_many_flow_into_table(const struct rte_hash *h,
 {
 	unsigned i;
 
-	mask1 = (rte_xmm_t){.u32 = {BIT_16_TO_23, ALL_32_BITS,
-				ALL_32_BITS, ALL_32_BITS} };
-	mask2 = (rte_xmm_t){.u32 = {ALL_32_BITS, ALL_32_BITS, 0, 0} };
+	mask1 = _mm_set_epi32(ALL_32_BITS, ALL_32_BITS,
+				ALL_32_BITS, BIT_16_TO_23);
+	mask2 = _mm_set_epi32(0, 0, ALL_32_BITS, ALL_32_BITS);
 
 	for (i = 0; i < nr_flow; i++) {
 		struct ipv6_l3fwd_em_route entry;
@@ -523,6 +549,39 @@ populate_ipv6_many_flow_into_table(const struct rte_hash *h,
 	}
 	printf("Hash: Adding 0x%x keys\n", nr_flow);
 }
+
+
+/*
+ * Buffer non-optimized handling of packets, invoked
+ * from main_loop.
+ */
+static inline void
+l3fwd_em_no_opt_send_packets(int nb_rx, struct rte_mbuf **pkts_burst,
+			uint8_t portid, struct lcore_conf *qconf)
+{
+	int32_t j;
+
+// why do we need to divide prefetching to 2 steps?
+
+	/* Prefetch first packets */
+	for (j = 0; j < PREFETCH_OFFSET && j < nb_rx; j++)
+		rte_prefetch0(rte_pktmbuf_mtod(pkts_burst[j], void *));
+
+	/*
+	 * Prefetch and forward already prefetched
+	 * packets.
+	 */
+	for (j = 0; j < (nb_rx - PREFETCH_OFFSET); j++) {
+		rte_prefetch0(rte_pktmbuf_mtod(pkts_burst[
+				j + PREFETCH_OFFSET], void *));
+		l3fwd_em_simple_forward(pkts_burst[j], portid, qconf);
+	}
+
+	/* Forward remaining prefetched packets */
+	for (; j < nb_rx; j++)
+		l3fwd_em_simple_forward(pkts_burst[j], portid, qconf);
+}
+
 
 /* main processing loop */
 int
@@ -572,6 +631,7 @@ em_main_loop(__attribute__((unused)) void *dummy)
 				portid = qconf->tx_port_id[i];
 				if (qconf->tx_mbufs[portid].len == 0)
 					continue;
+				printf("sending packet from tx\n");
 				send_burst(qconf,
 					qconf->tx_mbufs[portid].len,
 					portid);
@@ -589,20 +649,12 @@ em_main_loop(__attribute__((unused)) void *dummy)
 			queueid = qconf->rx_queue_list[i].queue_id;
 			nb_rx = rte_eth_rx_burst(portid, queueid, pkts_burst,
 				MAX_PKT_BURST);
-			if (nb_rx == 0)
+            if (nb_rx == 0) {
 				continue;
-
-			/*
-			 * For SSE4_1 use ENABLE_MULTI_BUFFER_OPTIMIZE=1
-			 * code.
-			 */
-#if defined(__SSE4_1__)
-			l3fwd_em_send_packets(nb_rx, pkts_burst,
-							portid, qconf);
-#else
+			}
+			printf("processing packet in rx...\t");
 			l3fwd_em_no_opt_send_packets(nb_rx, pkts_burst,
 							portid, qconf);
-#endif /* __SSE_4_1__ */
 		}
 	}
 
