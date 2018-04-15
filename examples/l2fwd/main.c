@@ -46,6 +46,7 @@
 #include <getopt.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <time.h>
 
 #include <rte_common.h>
 #include <rte_log.h>
@@ -71,6 +72,10 @@
 #include <rte_ring.h>
 #include <rte_mempool.h>
 #include <rte_mbuf.h>
+#include <rte_config.h>
+#include <rte_ip.h>
+
+#include "main.h"
 
 static volatile bool force_quit;
 
@@ -185,73 +190,98 @@ print_stats(void)
 	printf("\n====================================================\n");
 }
 
-typedef struct ActionList {
-	uint8_t len;
-	uint8_t actionCodes[8];
-	/*
-	 * 0 -- drop
-	 * 1 -- output
-	 * */
-} ActionList;
+static Mode mode_global = INT_SOURCE;
 
-ActionList
-doLookup(struct rte_mbuf *pkt);
+#define UTILIZATION_MAX 1000
+#define N_SERIES 256
+// TODO: what if measurement in done in the end of a second? We should use ticks.
+#define TIMING 1  // s
+#define NSECS_IN_SEC 1000000000.0
 
-void
-processActions(ActionList actions, struct rte_mbuf *pkt, unsigned src_port);
-
-ActionList
-doLookup(struct rte_mbuf *pkt)
-{
-	pkt = pkt;
-
-	ActionList outputAction;
-	outputAction.len = 1;
-	outputAction.actionCodes[0] = 1;
-	return outputAction;
-}
-
-void
-processActions(ActionList actions, struct rte_mbuf *pkt, unsigned src_port)
+static void
+perform_switching(struct rte_mbuf *m, unsigned src_port)
 {
 	int sent;
 	struct rte_eth_dev_tx_buffer *buffer;
 	unsigned dst_port;
-
-	for (uint8_t i = 0; i < actions.len; i++) {
-		switch (actions.actionCodes[i]) {
-			case 0:
-				break;
-			case 1:
-				dst_port = l2fwd_dst_ports[src_port];
-				buffer = tx_buffer[dst_port];
-				sent = rte_eth_tx_buffer(dst_port, 0, buffer, pkt);
-				if (sent) {
-					port_statistics[dst_port].tx += sent;
-				}
-				break;
-			case 2:
-				// change mac
-				break;
-			default:
-				break;
-		}
+	dst_port = l2fwd_dst_ports[src_port];
+	buffer = tx_buffer[dst_port];
+	sent = rte_eth_tx_buffer(dst_port, 0, buffer, m);
+	if (sent) {
+		port_statistics[dst_port].tx += sent;
 	}
 }
 
 static void
-l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
+insert_number(struct rte_mbuf *m, sending_batch *batch)
 {
-	ActionList actions = doLookup(m);
-    if (actions) {
+    // TODO: it may be needed to strip pkt first
+    /* Remove the Ethernet header and trailer from the input packet */
+    rte_pktmbuf_adj(m, (uint16_t) sizeof(struct ether_hdr));
 
+    if (!RTE_ETH_IS_IPV4_HDR(m->packet_type)) {
+        return;
     }
-	processActions(actions, m, portid);
+    struct ipv4_hdr *ip_hdr = rte_pktmbuf_mtod(m, struct ipv4_hdr *);
+    uint8_t *tos = &(ip_hdr->type_of_service);
+    *tos = rte_cpu_to_be_32(batch->number);
+
+    if (++(batch->count) == UTILIZATION_MAX) {
+        batch->number++;  // overflow is assumed
+        batch->count = 0;
+    }
 }
+
+static void
+to_controller(double utilization, uint8_t batch_number)
+{
+    // TODO: implement
+    fprintf(stderr, "Sending %lf utilization of batch %d to controller...", utilization, batch_number);
+}
+
+// TODO: design assumes sending out stat for every batch every TIMING.
+// But it's hard to implement other thread on pure C.
+// So we send on first packet gotten.
+static void
+read_number(struct rte_mbuf *m, receiving_batch *batches)
+{
+    rte_pktmbuf_adj(m, (uint16_t) sizeof(struct ether_hdr));
+
+    if (!RTE_ETH_IS_IPV4_HDR(m->packet_type)) {
+        return;
+    }
+    struct ipv4_hdr *ip_hdr = rte_pktmbuf_mtod(m, struct ipv4_hdr *);
+    uint8_t *tos = &(ip_hdr->type_of_service);
+
+    uint8_t batch_number = rte_be_to_cpu_32(*tos);
+    receiving_batch *batch = batches + batch_number;
+    batch->count++;
+
+	struct timespec cur_time;
+	clock_gettime(CLOCK_MONOTONIC, &cur_time);
+	// start new cycle
+    if (batch->count == 1) {
+		batch->init_time.tv_sec = cur_time.tv_sec;
+		batch->init_time.tv_nsec = cur_time.tv_nsec;
+		return;
+	}
+    double delta = cur_time.tv_sec - batch->init_time.tv_sec +
+                   (double)(cur_time.tv_nsec - batch->init_time.tv_nsec) / NSECS_IN_SEC;
+	if (delta >= TIMING) {
+		double utilization = (double)batch->count / UTILIZATION_MAX;  // TODO: / delta?
+		to_controller(utilization, batch_number);
+		// new cycle will be started on first packet caught
+	}
+
+    if (batch->count > UTILIZATION_MAX) {
+		fprintf(stderr, "Warning: Got more than UTILIZATION_MAX (%d) packets: %d", UTILIZATION_MAX, batch->count);
+	}
+}
+
 
 /* main processing loop */
 static void
-l2fwd_main_loop(void)
+l2fwd_main_loop(enum Mode mode)
 {
 	struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
 	struct rte_mbuf *m;
@@ -285,6 +315,13 @@ l2fwd_main_loop(void)
 
 	}
 
+    struct receiving_batch *receiving_batches = NULL;
+    struct sending_batch *sending_batch = NULL;
+    if (mode == INT_SOURCE) {
+		sending_batch = calloc(1, sizeof(struct sending_batch));
+    } else {
+        receiving_batches = calloc(N_SERIES, sizeof(struct receiving_batch));
+    }
 	while (!force_quit) {
 
 		cur_tsc = rte_rdtsc();
@@ -341,7 +378,12 @@ l2fwd_main_loop(void)
 			for (j = 0; j < nb_rx; j++) {
 				m = pkts_burst[j];
 				rte_prefetch0(rte_pktmbuf_mtod(m, void *));
-				l2fwd_simple_forward(m, portid);
+                if (mode == INT_SOURCE) {
+					insert_number(m, sending_batch);
+				} else {
+					read_number(m, receiving_batches);
+				}
+				perform_switching(m, portid);
 			}
 		}
 	}
@@ -350,7 +392,7 @@ l2fwd_main_loop(void)
 static int
 l2fwd_launch_one_lcore(__attribute__((unused)) void *dummy)
 {
-	l2fwd_main_loop();
+	l2fwd_main_loop(mode_global);
 	return 0;
 }
 
