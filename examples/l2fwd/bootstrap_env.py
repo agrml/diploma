@@ -3,6 +3,8 @@
 import os
 
 class Base:
+    """Interface"""
+
     def __init__(self):
         self.bootstrap_env()
 
@@ -12,10 +14,12 @@ class Base:
 
 
 class Host(Base):
-    """Note: you have to run traffic manually when all the system is set up"""
-
     def __init__(self):
         super().__init__()
+        print('''Host is ready. Now:
+1. Launch VMs
+2. Run that script (IntSoure, IntSink) at them
+3. Run self.run_traffic() at Host''')
 
     def bootstrap_env(self):
         cmds = ['ip link add IntSourceIn type dummy',
@@ -39,24 +43,25 @@ class Host(Base):
 
 
 class IntNode(Base):
+    """Interface"""
+
     def __init__(self):
         super().__init__()
 
     def run_dpdk_setup(self):
-        os.system('../???/???')
-        # ./setup.py
-        # 17
-        # 20 -> 64
-        # 23 -> 0000:00:08.0
-        # 23 -> 0000:00:09.0
-        #
-        # ./build/l2fwd -c 0x3 -n 4 -- -p 3
+        print('''Entering DPDK\' setup.sh...
+Select the following:
+17
+20 -> 64
+23 -> 0000:00:08.0
+23 -> 0000:00:09.0
+''')
+        os.system('../../tools/setup.sh')
 
     def run_c(self):
-        """Note: Don't forget to select mode in C code"""
-        # TODO: make
-        os.system('./build/l2fwd -c 0x3 -n 4 -- -p 3')
-
+        print('Assing correct value to the global variable in C code')
+        input('Continue? [Enter]: ')
+        os.system('export RTE_SDK=/home/kim/dpdk && export RTE_TARGET=build && ./build/l2fwd -c 0x3 -n 4 -- -p 3')
 
 class IntSource(IntNode):
     def __init__(self):
@@ -87,3 +92,6 @@ class IntSink(IntNode):
         os.system('iperf -s')
 
     def run_analyzer(self):
+        os.system('./analyzer.py')
+        # TODO: path in argv
+
