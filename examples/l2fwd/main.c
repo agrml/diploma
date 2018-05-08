@@ -225,6 +225,7 @@ insert_number(struct rte_mbuf *m, sending_batch *batch)
     struct ipv4_hdr *ip_hdr = rte_pktmbuf_mtod(m, struct ipv4_hdr *);
     uint8_t *tos = &(ip_hdr->type_of_service);
     *tos = rte_cpu_to_be_32(batch->number);
+    ip_hdr->hdr_checksum = rte_ipv4_cksum(ip_hdr);
 
     if (++(batch->count) == UTILIZATION_MAX) {
         batch->number++;  // overflow is assumed
