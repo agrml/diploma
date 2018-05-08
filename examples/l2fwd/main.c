@@ -47,6 +47,10 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+
 
 #include <rte_common.h>
 #include <rte_log.h>
@@ -198,6 +202,10 @@ static Mode mode_global = INT_SOURCE;
 #define TIMING 1  // s
 #define NSECS_IN_SEC 1000000000.0
 
+// Create FIFO
+char FIFO_PATH[] = "fifo";
+FILE *FIFO = NULL;
+
 static void
 perform_switching(struct rte_mbuf *m, unsigned src_port)
 {
@@ -225,6 +233,7 @@ insert_number(struct rte_mbuf *m, sending_batch *batch)
     struct ipv4_hdr *ip_hdr = rte_pktmbuf_mtod(m, struct ipv4_hdr *);
     uint8_t *tos = &(ip_hdr->type_of_service);
     *tos = rte_cpu_to_be_32(batch->number);
+    ip_hdr->hdr_checksum = rte_ipv4_cksum(ip_hdr);
 
     if (++(batch->count) == UTILIZATION_MAX) {
         batch->number++;  // overflow is assumed
@@ -235,8 +244,14 @@ insert_number(struct rte_mbuf *m, sending_batch *batch)
 static void
 to_controller(double utilization, uint8_t batch_number)
 {
-    // TODO: implement
-    fprintf(stderr, "Sending %lf utilization of batch %d to controller...", utilization, batch_number);
+    // Write to FIFO
+    int ret_code = fprintf(FIFO, "%lf ", utilization);
+    fflush(FIFO);
+    if (ret_code < 0) {
+        printf("fprintf() error: %d\n", ret_code);
+    }
+
+    fprintf(stderr, "Sent %lf utilization of batch %d to controller via FIFO", utilization, batch_number);
 }
 
 // TODO: design assumes sending out stat for every batch every TIMING.
@@ -476,6 +491,14 @@ l2fwd_parse_args(int argc, char **argv)
 				  lgopts, &option_index)) != EOF) {
 
 		switch (opt) {
+        // mode
+            case 'm':
+                if (strtol(optarg, NULL, 10) == 1) {
+                    mode_global = INT_SOURCE;
+                } else {
+                    mode_global = INT_SINK;
+                }
+
 		/* portmask */
 		case 'p':
 			l2fwd_enabled_port_mask = l2fwd_parse_portmask(optarg);
@@ -597,6 +620,20 @@ signal_handler(int signum)
 int
 main(int argc, char **argv)
 {
+    int ret_code = mkfifo(FIFO_PATH, S_IRWXU);
+    if (ret_code != 0)
+    {
+        printf("mkfifo() error: %d\n", ret_code);
+        return -1;
+    }
+
+    FIFO = fopen(FIFO_PATH, "w");
+    if (FIFO < 0)
+    {
+        printf("open() error: %d\n", FIFO);
+        return -1;
+    }
+
 	struct lcore_queue_conf *qconf;
 	struct rte_eth_dev_info dev_info;
 	int ret;
@@ -795,6 +832,11 @@ main(int argc, char **argv)
 		rte_eth_dev_close(portid);
 		printf(" Done\n");
 	}
+
+    // Close and delete FIFO
+    fclose(FIFO);
+    unlink(FIFO_PATH);
+
 	printf("Bye...\n");
 
 	return ret;
