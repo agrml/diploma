@@ -477,6 +477,14 @@ l2fwd_parse_args(int argc, char **argv)
 				  lgopts, &option_index)) != EOF) {
 
 		switch (opt) {
+        // mode
+            case 'm':
+                if (strtol(optarg, NULL, 10) == 1) {
+                    mode_global = INT_SOURCE;
+                } else {
+                    mode_global = INT_SINK;
+                }
+
 		/* portmask */
 		case 'p':
 			l2fwd_enabled_port_mask = l2fwd_parse_portmask(optarg);
