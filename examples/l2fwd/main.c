@@ -198,7 +198,7 @@ static Mode mode_global = INT_SOURCE;
 
 #define UTILIZATION_MAX 1000
 #define N_SERIES 256
-// TODO: what if measurement in done in the end of a second? We should use ticks.
+// TODO: Time is a wrong metrics. Do as described in the paper
 #define TIMING 1  // s
 #define NSECS_IN_SEC 1000000000.0
 
