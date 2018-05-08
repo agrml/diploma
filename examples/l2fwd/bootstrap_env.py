@@ -16,29 +16,42 @@ class Base:
 class Host(Base):
     def __init__(self):
         super().__init__()
-        print('''Host is ready. Now:
-1. Launch VMs
-2. Run that script (IntSoure, IntSink) at them
-3. Run self.run_traffic() at Host''')
+        print('''Host is ready. Your actions now:
+0. Check IntSourceIn/Out inserted to VM-1 and IntSinkIn to VM-2.
+1. Launch VMs.
+2. Run that script at them:
+VM-1: ssh kim@127.0.0.1 -p 8025
+VM-2: ssh kim@127.0.0.1 -p 8026
+3. Run self.run_traffic() at Host.''')
 
     def bootstrap_env(self):
         cmds = ['ip link add IntSourceIn type dummy',
                 'ip addr add 192.168.57.1/24 dev IntSourceIn',
                 'ip link set IntSourceIn up',
-                # route to Iperf server on IntSink
+                # route to iperf server
                 'ip route add 11.11.10.0/24 dev IntSourceIn',
 
                 'ip link add IntSourceOut type veth peer name IntSinkIn',
                 'ip link set IntSourceOut up',
-                'ip link set IntSinkIn up',
+                'ip link set IntSinkIn up'
                 
+                # iperf server
+                'ip netns add iperf',
+                'ip netns exec iperf ip link add IntSinkOut type dummy',
+                'ip netns exec iperf ip addr add 11.11.10.1/24 dev IntSinkOut',
+                'ip netns exec iperf ip ip link set IntSinkOut up',
+                # route to iperf client
+                'ip netns exec iperf ip route add 192.168.57.0/24 dev IntSinkOut'
+
+
                 # elmulate packet loss on connection. 2% random loss with 25% correlation
-                'tc qdisc changedev IntSourceOut netem loss 2% 25%'
+                'tc qdisc add dev IntSourceOut root netem loss 0.02 0.25'
                 ]
         for cmd in cmds:
             os.system(cmd)
 
     def run_traffic(self):
+        os.system('iperf -s')
         os.system('iperf -c 11.11.10.1')
 
 
@@ -73,23 +86,9 @@ class IntSource(IntNode):
 class IntSink(IntNode):
     def __init__(self):
         super().__init__()
-        self.start_iperf_server()
         self.run_dpdk_setup()
         self.run_analyzer()
         self.run_c()
-
-    def bootstrap_env(self):
-        cmds = ['ip link add DpdkOut type veth peer name LinuxIn',
-                'ip addr add 11.11.10.1/24 dev LinuxIn',
-                'ip link set LinuxIn up',
-                # route to Iperf client on host
-                'ip route add 192.168.57.0/24 dev LinuxIn'
-               ]
-        for cmd in cmds:
-            os.system(cmd)
-
-    def start_iperf_server(self):
-        os.system('iperf -s')
 
     def run_analyzer(self):
         os.system('./analyzer.py')
