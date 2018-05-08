@@ -4,10 +4,6 @@ import argparse
 from enum import Enum
 import time
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('path', help='path to fifo object')
-args = parser.parse_args()
-
 TESTS_TO_SKIP = 30
 ACCURACY = 0.99
 RELIABILITY = 0.95
@@ -80,3 +76,10 @@ class Analyzer:
 
     def calculate_estimation2(self, count, dispersion, moment):
         return C * moment / dispersion**(3/2) / count**(1/2) <= EPS
+
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('path', help='path to fifo object')
+args = parser.parse_args()
+me = Analyzer(args.path)
+me()

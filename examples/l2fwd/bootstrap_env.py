@@ -1,5 +1,6 @@
 #! /usr/bin/python3
 
+import argparse
 import os
 
 class Base:
@@ -16,13 +17,14 @@ class Base:
 class Host(Base):
     def __init__(self):
         super().__init__()
-        print('''Host is ready. Your actions now:
+        input('''Host is ready. Your actions now:
 0. Check IntSourceIn/Out inserted to VM-1 and IntSinkIn to VM-2.
 1. Launch VMs.
 2. Run that script at them:
 VM-1: ssh kim@127.0.0.1 -p 8025
 VM-2: ssh kim@127.0.0.1 -p 8026
-3. Run self.run_traffic() at Host.''')
+3. Run traffic when ready [Enter]: ''')
+        self.run_traffic()
 
     def bootstrap_env(self):
         cmds = ['ip link add IntSourceIn type dummy',
@@ -62,7 +64,7 @@ class IntNode(Base):
         super().__init__()
 
     def run_dpdk_setup(self):
-        print('''Entering DPDK\' setup.sh...
+        print('''Entering DPDK\'s setup.sh...
 Select the following:
 17
 20 -> 64
@@ -71,10 +73,6 @@ Select the following:
 ''')
         os.system('../../tools/setup.sh')
 
-    def run_c(self):
-        print('Assing correct value to the global variable in C code')
-        input('Continue? [Enter]: ')
-        os.system('export RTE_SDK=/home/kim/dpdk && export RTE_TARGET=build && ./build/l2fwd -c 0x3 -n 4 -- -p 3')
 
 class IntSource(IntNode):
     def __init__(self):
@@ -82,6 +80,8 @@ class IntSource(IntNode):
         self.run_dpdk_setup()
         self.run_c()
 
+    def run_c(self):
+        os.system('export RTE_SDK=/home/kim/dpdk && export RTE_TARGET=build && ./build/l2fwd -c 0x3 -n 4 -- -p 3 -m 1')
 
 class IntSink(IntNode):
     def __init__(self):
@@ -91,6 +91,21 @@ class IntSink(IntNode):
         self.run_c()
 
     def run_analyzer(self):
-        os.system('./analyzer.py')
-        # TODO: path in argv
+        os.system('./analyzer.py fifo')
+
+    def run_c(self):
+        os.system('export RTE_SDK=/home/kim/dpdk && export RTE_TARGET=build && ./build/l2fwd -c 0x3 -n 4 -- -p 3 -m 2')
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('role', help='Role: Host/IntSource/IntSink')
+args = parser.parse_args()
+if args.role == 'Host':
+    me = Host()
+elif args.role == 'IntSource':
+    me = IntSource()
+elif args.role == 'IntSink':
+    me = IntSink()
+else:
+    print('Incorrect mode. Exiting...')
+
 
