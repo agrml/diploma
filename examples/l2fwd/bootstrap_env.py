@@ -23,8 +23,9 @@ class Host(Base):
 2. Run that script at them:
 VM-1: ssh kim@127.0.0.1 -p 8025
 VM-2: ssh kim@127.0.0.1 -p 8026
-3. Run traffic when ready [Enter]: ''')
-        self.run_traffic()
+3. Run server when ready [Enter]: ''')
+        print('For running traffic exec manually `iperf -c 11.11.10.1`')
+        self.run_server()
 
     def bootstrap_env(self):
         cmds = ['ip link add IntSourceIn type dummy',
@@ -52,9 +53,8 @@ VM-2: ssh kim@127.0.0.1 -p 8026
         for cmd in cmds:
             os.system(cmd)
 
-    def run_traffic(self):
+    def run_server(self):
         os.system('iperf -s')
-        os.system('iperf -c 11.11.10.1')
 
 
 class IntNode(Base):

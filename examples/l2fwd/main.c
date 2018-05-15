@@ -196,9 +196,8 @@ print_stats(void)
 
 static Mode mode_global = INT_SOURCE;
 
-#define UTILIZATION_MAX 1000
+#define UTILIZATION_MAX 3268
 #define N_SERIES 256
-// TODO: Time is a wrong metrics. Do as described in the paper
 #define TIMING 1  // s
 #define NSECS_IN_SEC 1000000000.0
 
@@ -223,7 +222,6 @@ perform_switching(struct rte_mbuf *m, unsigned src_port)
 static void
 insert_number(struct rte_mbuf *m, sending_batch *batch)
 {
-    // TODO: it may be needed to strip pkt first
     /* Remove the Ethernet header and trailer from the input packet */
     rte_pktmbuf_adj(m, (uint16_t) sizeof(struct ether_hdr));
 
@@ -254,9 +252,6 @@ to_controller(double utilization, uint8_t batch_number)
     fprintf(stderr, "Sent %lf utilization of batch %d to controller via FIFO", utilization, batch_number);
 }
 
-// TODO: design assumes sending out stat for every batch every TIMING.
-// But it's hard to implement other thread on pure C.
-// So we send on first packet gotten.
 static void
 read_number(struct rte_mbuf *m, receiving_batch *batches)
 {
@@ -349,7 +344,7 @@ l2fwd_main_loop(enum Mode mode)
 
 			for (i = 0; i < qconf->n_rx_port /*as n_tx_port???*/; i++) {
 
-				portid = l2fwd_dst_ports[qconf->rx_port_list[i]];  // why not just `i`? why do we iterate over disabled ports instead of only enabled ones?
+				portid = l2fwd_dst_ports[qconf->rx_port_list[i]];
 				buffer = tx_buffer[portid];
 
 				sent = rte_eth_tx_buffer_flush(portid, 0, buffer);
