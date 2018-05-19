@@ -21,8 +21,8 @@ class Host(Base):
 0. Check IntSourceIn/Out inserted to VM-1 and IntSinkIn to VM-2.
 1. Launch VMs.
 2. Run that script at them:
-VM-1: ssh kim@127.0.0.1 -p 8025
-VM-2: ssh kim@127.0.0.1 -p 8026
+    VM-1: ssh kim@127.0.0.1 -p 8025
+    VM-2: ssh kim@127.0.0.1 -p 8026
 3. Run server when ready [Enter]: ''')
         print('For running traffic exec manually `iperf -c 11.11.10.1`')
         self.run_server()
@@ -34,17 +34,21 @@ VM-2: ssh kim@127.0.0.1 -p 8026
                 # route to iperf server
                 'ip route add 11.11.10.0/24 dev IntSourceIn',
 
-                'ip link add IntSourceOut type veth peer name IntSinkIn',
+                # ns-2 for iperf server
+                'ip netns add ns-2',
+
+                # connect two ns
+                'ip link add IntSourceOut type veth peer name IntSinkIn netns ns-2',
                 'ip link set IntSourceOut up',
-                'ip link set IntSinkIn up'
-                
-                # iperf server
-                'ip netns add iperf',
-                'ip netns exec iperf ip link add IntSinkOut type dummy',
-                'ip netns exec iperf ip addr add 11.11.10.1/24 dev IntSinkOut',
-                'ip netns exec iperf ip ip link set IntSinkOut up',
+
+                # ns-2 IntSinkIn
+                'ip netns exec ns-2 ip link set IntSinkIn up',
+                # ns-2 IntSinkOut
+                'ip netns exec ns-2 ip link add IntSinkOut type dummy',
+                'ip netns exec ns-2 ip addr add 11.11.10.1/24 dev IntSinkOut',
+                'ip netns exec ns-2 ip link set IntSinkOut up',
                 # route to iperf client
-                'ip netns exec iperf ip route add 192.168.57.0/24 dev IntSinkOut'
+                'ip netns exec ns-2 ip route add 192.168.57.0/24 dev IntSinkOut',
 
 
                 # elmulate packet loss on connection. 2% random loss with 25% correlation
@@ -54,7 +58,7 @@ VM-2: ssh kim@127.0.0.1 -p 8026
             os.system(cmd)
 
     def run_server(self):
-        os.system('iperf -s')
+        os.system('ip netns exec ns-2 iperf -s')
 
 
 class IntNode(Base):
