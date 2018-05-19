@@ -482,17 +482,17 @@ l2fwd_parse_args(int argc, char **argv)
 
 	argvopt = argv;
 
-	while ((opt = getopt_long(argc, argvopt, "p:q:T:",
+	while ((opt = getopt_long(argc, argvopt, "p:q:T:m:",
 				  lgopts, &option_index)) != EOF) {
 
 		switch (opt) {
         // mode
-            case 'm':
-                if (strtol(optarg, NULL, 10) == 1) {
-                    mode_global = INT_SOURCE;
-                } else {
-                    mode_global = INT_SINK;
-                }
+        case 'm':
+            if (strtol(optarg, NULL, 10) == 1) {
+                mode_global = INT_SOURCE;
+            } else {
+                mode_global = INT_SINK;
+            }
 
 		/* portmask */
 		case 'p':
