@@ -615,20 +615,7 @@ signal_handler(int signum)
 int
 main(int argc, char **argv)
 {
-    int ret_code = mkfifo(FIFO_PATH, S_IRWXU);
-    if (ret_code != 0)
-    {
-        printf("mkfifo() error: %d\n", ret_code);
-        return -1;
-    }
-
-    FIFO = fopen(FIFO_PATH, "w");
-    if (FIFO < 0)
-    {
-        printf("open() error: %d\n", FIFO);
-        return -1;
-    }
-
+    
 	struct lcore_queue_conf *qconf;
 	struct rte_eth_dev_info dev_info;
 	int ret;
@@ -653,7 +640,23 @@ main(int argc, char **argv)
 	ret = l2fwd_parse_args(argc, argv);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Invalid L2FWD arguments\n");
+    
+    if (mode_global == INT_SINK) {
+		int ret_code = mkfifo(FIFO_PATH, S_IRWXU);
+	    if (ret_code != 0)
+	    {
+    	    printf("mkfifo() error: %d\n", ret_code);
+        	return -1;
+	    }
 
+	    FIFO = fopen(FIFO_PATH, "w");
+	    if (!FIFO)
+	    {
+	        printf("open() error with FIFO");
+	        return -1;
+	    }
+	}
+	
 	/* create the mbuf pool */
 	l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", NB_MBUF, 32,
 		0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
